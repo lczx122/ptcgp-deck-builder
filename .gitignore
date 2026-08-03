@@ -2,3 +2,13 @@ node_modules/
 dist/
 .DS_Store
 *.local
+
+# Datamine extraction output and Python caches
+datamine/out/
+out/
+__pycache__/
+*.pyc
+# Never commit raw game binaries
+*.apk
+*.xapk
+*.apks
