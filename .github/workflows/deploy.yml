@@ -19,6 +19,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set Pages source to GitHub Actions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Current Pages config:"
+          curl -s -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/pages" || true
+          # Switch (or create) the Pages site with the workflow build type so
+          # deployments from this workflow are accepted.
+          status=$(curl -s -o /tmp/pages-put.json -w "%{http_code}" -X PUT \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/pages" \
+            -d '{"build_type":"workflow"}')
+          echo "PUT build_type=workflow -> HTTP $status"
+          cat /tmp/pages-put.json || true
       - uses: actions/configure-pages@v5
         with:
           enablement: true
