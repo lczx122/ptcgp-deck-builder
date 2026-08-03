@@ -15,6 +15,11 @@ const IMAGE_MIRRORS = [
 // self-hosted; only those try the local path first, so every other card goes
 // straight to the mirror with no wasted request.
 const LOCAL_IMAGES = `${import.meta.env.BASE_URL}images/cards-by-set`;
+// LimitlessTCG's CDN — a comprehensive, current card-art host used as a
+// fallback for cards the community mirror hasn't published yet (verified:
+// serves cross-origin with no hotlink protection). Its URL shape differs:
+// pocket/{SET}/{SET}_{NNN}_EN.webp with a zero-padded 3-digit number.
+const LIMITLESS_BASE = "https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com/pocket";
 const IMAGE_RE = /^c(PK|TR)_(\d+)_(\d+)_(\d+)_(.+)_([A-Z]+)\.webp$/;
 
 const state = {
@@ -166,17 +171,26 @@ function populateSetFilter() {
   }
 }
 
+// Community-mirror URL shape: cards-by-set/{set}/{number}.webp
 function cardImageUrl(base, card) {
   return `${base}/${card.set}/${card.number}.webp`;
 }
 
-// Ordered list of URLs to try for a card's art. Self-hosted sets try the repo
-// first; everything falls back through the mirrors, then the initials placeholder.
+// LimitlessTCG URL shape: pocket/{set}/{set}_{NNN}_EN.webp (3-digit number).
+function limitlessImageUrl(card) {
+  const n3 = String(card.number).padStart(3, "0");
+  return `${LIMITLESS_BASE}/${card.set}/${card.set}_${n3}_EN.webp`;
+}
+
+// Ordered list of URLs to try for a card's art, then the initials placeholder.
+// Self-hosted sets try the repo first; the community mirrors cover most cards;
+// Limitless is the last-resort mirror that catches brand-new sets (e.g. B4)
+// the community mirror hasn't published yet.
 function cardImageSources(card) {
-  const bases = state.selfHostedSets.has(card.set)
+  const mirrorBases = state.selfHostedSets.has(card.set)
     ? [LOCAL_IMAGES, ...IMAGE_MIRRORS]
     : IMAGE_MIRRORS;
-  return bases.map(base => cardImageUrl(base, card));
+  return [...mirrorBases.map(base => cardImageUrl(base, card)), limitlessImageUrl(card)];
 }
 
 function applyFilters() {
