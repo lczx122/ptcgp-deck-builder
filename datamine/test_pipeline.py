@@ -94,8 +94,8 @@ def test_normalize_maps_fields_and_values():
         cfg["source"] = "text/cards.json"
         mapping.write_text(json.dumps(cfg))
 
-        count = normalize.normalize(out, mapping, "cards.extra.json")
-        cards = json.loads((out / "cards.extra.json").read_text())
+        count = normalize.normalize(out, mapping, "cards.json")
+        cards = json.loads((out / "cards.json").read_text())
 
     assert count == 2, f"expected 2 cards, got {count}"
     assert cards[0]["element"] == "grass", cards[0]

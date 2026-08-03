@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn an extracted dump into cards.extra.json matching the web app's schema.
+"""Turn an extracted dump into cards.json matching the web app's schema.
 
 The web app consumes objects shaped like the community database:
     { "set", "number", "name", "rarity", "image", "element", "type", ... }
@@ -13,11 +13,11 @@ Pipeline:
     1. extract.py         -> ./out (images + text + mono + manifest)
     2. inspect_dump.py    -> discover the card table + field names
     3. edit mapping.json  -> map game fields -> app schema
-    4. normalize.py       -> ./out/cards.extra.json  (drop into public/data/)
+    4. normalize.py       -> ./out/cards.json  (drop into public/data/)
 
 Usage:
     python normalize.py ./out                       # uses datamine/mapping.json
-    python normalize.py ./out --mapping my.json --out-file cards.extra.json
+    python normalize.py ./out --mapping my.json --out-file cards.json
 """
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("out", type=Path, help="the extract.py output directory")
     ap.add_argument("--mapping", type=Path, default=Path(__file__).parent / "mapping.json")
-    ap.add_argument("--out-file", default="cards.extra.json", help="output filename inside `out`")
+    ap.add_argument("--out-file", default="cards.json", help="output filename inside `out`")
     args = ap.parse_args(argv)
     normalize(args.out, args.mapping, args.out_file)
 

@@ -2,7 +2,7 @@
 
 A small pipeline that extracts card images and card data from a Pokémon TCG
 Pocket **APK** (or a directory of its Unity asset bundles) and normalizes them
-into the same `cards.extra.json` shape the web app already consumes.
+into the same `cards.json` shape the web app already consumes.
 
 It exists as a **fallback / independent source**: the app's primary data still
 comes from the upstream `pokemon-tcg-pocket-database` community project (see the
@@ -18,7 +18,7 @@ game before upstream catches up, or to verify upstream against the source.
              │                ├── mono/*.json    edit mapping.json
              │                └── manifest.json      │
              │                                       ▼
-             └──────────────────────────▶ normalize.py ──▶ ./out/cards.extra.json
+             └──────────────────────────▶ normalize.py ──▶ ./out/cards.json
 ```
 
 1. **`extract.py`** — game-agnostic. Walks every Unity bundle in the APK/XAPK/zip
@@ -31,7 +31,7 @@ game before upstream catches up, or to verify upstream against the source.
 3. **edit `mapping.json`** — point the game's real field names at the app schema
    (`set`, `number`, `name`, `rarity`, `element`, `type`). This is the only part
    that changes between game versions; the code stays put.
-4. **`normalize.py`** — applies the mapping and writes `cards.extra.json`, ready
+4. **`normalize.py`** — applies the mapping and writes `cards.json`, ready
    to drop into `public/data/`.
 
 ## Install & run
@@ -42,7 +42,7 @@ pip install -r datamine/requirements.txt
 python datamine/extract.py path/to/PokemonTCGPocket.apk --out ./out
 python datamine/inspect_dump.py ./out            # find the card table
 # edit datamine/mapping.json based on what you saw
-python datamine/normalize.py ./out               # -> ./out/cards.extra.json
+python datamine/normalize.py ./out               # -> ./out/cards.json
 ```
 
 Run the self-tests (no APK or UnityPy needed for these):
