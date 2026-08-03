@@ -5,8 +5,16 @@ import { encodeDeck, bytesToBase64, base64ToBytes, decodeDeck, ENERGY_CODES } fr
 
 const CDN_BASE = "https://cdn.jsdelivr.net/npm/pokemon-tcg-pocket-database/dist";
 const LOCAL_BASE = `${import.meta.env.BASE_URL}data`;
-const IMAGE_CDN = "https://cdn.jsdelivr.net/gh/flibustier/pokemon-tcg-exchange@main/public/images/cards-by-set";
-const IMAGE_FALLBACK = "https://raw.githubusercontent.com/flibustier/pokemon-tcg-exchange/main/public/images/cards-by-set";
+// Community mirrors that host card art as cards-by-set/{set}/{number}.webp.
+const IMAGE_MIRRORS = [
+  "https://cdn.jsdelivr.net/gh/flibustier/pokemon-tcg-exchange@main/public/images/cards-by-set",
+  "https://raw.githubusercontent.com/flibustier/pokemon-tcg-exchange/main/public/images/cards-by-set",
+];
+// Self-hosted art in the repo, for sets a mirror hasn't published yet (e.g. a
+// set released days ago). public/images/manifest.json lists which set codes are
+// self-hosted; only those try the local path first, so every other card goes
+// straight to the mirror with no wasted request.
+const LOCAL_IMAGES = `${import.meta.env.BASE_URL}images/cards-by-set`;
 const IMAGE_RE = /^c(PK|TR)_(\d+)_(\d+)_(\d+)_(.+)_([A-Z]+)\.webp$/;
 
 const state = {
@@ -20,6 +28,7 @@ const state = {
   generatedBase64: "",
   setInfo: new Map(),
   elements: new Map(), // image filename -> element, for the type badge
+  selfHostedSets: new Set(), // set codes whose art is self-hosted in the repo
 };
 
 document.querySelector("#app").innerHTML = `
@@ -161,6 +170,15 @@ function cardImageUrl(base, card) {
   return `${base}/${card.set}/${card.number}.webp`;
 }
 
+// Ordered list of URLs to try for a card's art. Self-hosted sets try the repo
+// first; everything falls back through the mirrors, then the initials placeholder.
+function cardImageSources(card) {
+  const bases = state.selfHostedSets.has(card.set)
+    ? [LOCAL_IMAGES, ...IMAGE_MIRRORS]
+    : IMAGE_MIRRORS;
+  return bases.map(base => cardImageUrl(base, card));
+}
+
 function applyFilters() {
   const q = state.query.toLowerCase().trim();
   state.filtered = state.cards.filter(card => {
@@ -189,7 +207,7 @@ function renderResults() {
     tile.innerHTML = `
       <div class="card-art">
         <span class="card-art-fallback">${initials}</span>
-        <img loading="lazy" alt="" src="${cardImageUrl(IMAGE_CDN, card)}">
+        <img loading="lazy" alt="">
       </div>
       <div class="card-body">
         <div class="card-name">${card.name}</div>
@@ -200,14 +218,14 @@ function renderResults() {
         </div>
       </div>`;
     const img = tile.querySelector("img");
+    const sources = cardImageSources(card);
+    let attempt = 0;
     img.onerror = () => {
-      if (!img.dataset.retried) {
-        img.dataset.retried = "1";
-        img.src = cardImageUrl(IMAGE_FALLBACK, card);
-      } else {
-        img.remove();
-      }
+      attempt += 1;
+      if (attempt < sources.length) img.src = sources[attempt];
+      else img.remove(); // exhausted all sources -> show the initials placeholder
     };
+    img.src = sources[0];
     tile.querySelector("button").addEventListener("click", () => addCard(card));
     els.results.appendChild(tile);
   }
@@ -437,18 +455,23 @@ async function bootstrap() {
     // Prefer the live CDN (always the newest published set), fall back to the
     // snapshot bundled with the site. cards.json is the maintained, current file
     // (cards.extra.json is an enriched variant that upstream froze at set B1a).
-    const [raw, sets, elements] = await Promise.all([
+    const [raw, sets, elements, selfHosted] = await Promise.all([
       fetchJsonWithFallback([`${CDN_BASE}/cards.json`, `${LOCAL_BASE}/cards.json`]),
       fetchJsonWithFallback([`${CDN_BASE}/sets.json`, `${LOCAL_BASE}/sets.json`]).catch(() => null),
       // Element/type badge lookup for cards.json, which omits the element field.
       // Bundled-only (derived once from the frozen enriched file).
       fetchJsonWithFallback([`${LOCAL_BASE}/elements.json`]).catch(() => null),
+      // Which set codes have self-hosted art in this repo (optional).
+      fetchJsonWithFallback([`${import.meta.env.BASE_URL}images/manifest.json`]).catch(() => null),
     ]);
     if (sets) {
       for (const entry of Object.values(sets).flat()) state.setInfo.set(entry.code, entry);
     }
     if (elements) {
       for (const [image, element] of Object.entries(elements)) state.elements.set(image, element);
+    }
+    if (Array.isArray(selfHosted)) {
+      for (const code of selfHosted) state.selfHostedSets.add(code);
     }
     state.cards = uniqueFunctionalCards(raw);
     populateSetFilter();
