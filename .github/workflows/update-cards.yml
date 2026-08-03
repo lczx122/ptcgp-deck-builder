@@ -1,0 +1,43 @@
+name: Update card database
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4" # Mondays and Thursdays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch latest card database
+        run: |
+          npm pack pokemon-tcg-pocket-database@latest --silent
+          tar -xzf pokemon-tcg-pocket-database-*.tgz
+          mkdir -p public/data
+          cp package/dist/cards.extra.json public/data/cards.extra.json
+          cp package/dist/sets.json public/data/sets.json
+          rm -rf package pokemon-tcg-pocket-database-*.tgz
+      - name: Commit and push if changed
+        id: commit
+        run: |
+          if git diff --quiet -- public/data; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Card database already up to date."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add public/data
+            git commit -m "Update card database snapshot"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Trigger site deploy
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main

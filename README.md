@@ -15,7 +15,19 @@ A complete browser-based Pokémon TCG Pocket deck builder that generates valid i
 - Copy Base64 payload
 - Download QR as PNG
 - Export and import deck JSON
+- Import a deck from a Base64 QR payload (round-trip decoder)
+- Real card art from the `pokemon-tcg-exchange` image mirror
+- Bundled card-database snapshot as an offline/CDN-outage fallback
+- Set filter sorted newest set first, with real set names
 - Responsive desktop and mobile layout
+
+## Staying up to date
+
+The app always fetches the latest published card database from the CDN at
+runtime. In addition, a scheduled workflow
+(`.github/workflows/update-cards.yml`) runs twice a week, refreshes the
+bundled snapshot in `public/data/`, and redeploys the site whenever a new
+set is published. It can also be run manually from the Actions tab.
 
 ## Run locally
 
