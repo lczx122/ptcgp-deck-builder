@@ -1,0 +1,5 @@
+# Datamine engine dependencies.
+# UnityPy parses Unity asset bundles / serialized files and renders textures.
+UnityPy>=1.20
+# Pillow is UnityPy's image backend (webp/png export).
+Pillow>=10.0

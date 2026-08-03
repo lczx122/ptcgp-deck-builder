@@ -19,7 +19,9 @@ jobs:
           npm pack pokemon-tcg-pocket-database@latest --silent
           tar -xzf pokemon-tcg-pocket-database-*.tgz
           mkdir -p public/data
-          cp package/dist/cards.extra.json public/data/cards.extra.json
+          # cards.json is the maintained, current file (cards.extra.json is an
+          # enriched variant upstream froze at set B1a).
+          cp package/dist/cards.json public/data/cards.json
           cp package/dist/sets.json public/data/sets.json
           rm -rf package pokemon-tcg-pocket-database-*.tgz
       - name: Commit and push if changed

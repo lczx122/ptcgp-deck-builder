@@ -19,6 +19,7 @@ const state = {
   set: "all",
   generatedBase64: "",
   setInfo: new Map(),
+  elements: new Map(), // image filename -> element, for the type badge
 };
 
 document.querySelector("#app").innerHTML = `
@@ -124,7 +125,7 @@ function normalizeCard(card) {
     rarity: card.rarity,
     kind: prefix === "PK" ? "pokemon" : "trainer",
     functionalId: Number(match[3]),
-    element: card.element || "",
+    element: card.element || state.elements.get(card.image) || "",
     subtype: card.type || "",
   };
 }
@@ -434,13 +435,20 @@ async function bootstrap() {
   setMessage("Loading card database…");
   try {
     // Prefer the live CDN (always the newest published set), fall back to the
-    // snapshot bundled with the site.
-    const [raw, sets] = await Promise.all([
-      fetchJsonWithFallback([`${CDN_BASE}/cards.extra.json`, `${LOCAL_BASE}/cards.extra.json`]),
+    // snapshot bundled with the site. cards.json is the maintained, current file
+    // (cards.extra.json is an enriched variant that upstream froze at set B1a).
+    const [raw, sets, elements] = await Promise.all([
+      fetchJsonWithFallback([`${CDN_BASE}/cards.json`, `${LOCAL_BASE}/cards.json`]),
       fetchJsonWithFallback([`${CDN_BASE}/sets.json`, `${LOCAL_BASE}/sets.json`]).catch(() => null),
+      // Element/type badge lookup for cards.json, which omits the element field.
+      // Bundled-only (derived once from the frozen enriched file).
+      fetchJsonWithFallback([`${LOCAL_BASE}/elements.json`]).catch(() => null),
     ]);
     if (sets) {
       for (const entry of Object.values(sets).flat()) state.setInfo.set(entry.code, entry);
+    }
+    if (elements) {
+      for (const [image, element] of Object.entries(elements)) state.elements.set(image, element);
     }
     state.cards = uniqueFunctionalCards(raw);
     populateSetFilter();
