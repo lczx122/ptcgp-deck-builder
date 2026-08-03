@@ -54,3 +54,54 @@ export function bytesToBase64(bytes) {
   for (const value of bytes) binary += String.fromCharCode(value);
   return btoa(binary);
 }
+
+export function base64ToBytes(base64) {
+  const binary = atob(base64.trim());
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+export function decodeDeck(bytes) {
+  let offset = 0;
+  const readByte = label => {
+    if (offset >= bytes.length) throw new Error(`Truncated payload while reading ${label}.`);
+    return bytes[offset++];
+  };
+  const readU24 = () => {
+    if (offset + 3 > bytes.length) throw new Error("Truncated payload while reading a card ID.");
+    const value = (bytes[offset] << 16) | (bytes[offset + 1] << 8) | bytes[offset + 2];
+    offset += 3;
+    return value;
+  };
+
+  const trainerCount = readByte("the trainer count");
+  const trainers = [];
+  for (let i = 0; i < trainerCount; i++) {
+    const value = readU24();
+    if (value < TRAINER_OFFSET) throw new Error(`Invalid trainer card ID: ${value}.`);
+    trainers.push(value - TRAINER_OFFSET);
+  }
+
+  const pokemonCount = readByte("the Pokémon count");
+  const pokemon = [];
+  for (let i = 0; i < pokemonCount; i++) pokemon.push(readU24());
+
+  const energyCount = readByte("the energy count");
+  const codeToEnergy = Object.fromEntries(
+    Object.entries(ENERGY_CODES).map(([name, code]) => [code, name])
+  );
+  const energies = [];
+  for (let i = 0; i < energyCount; i++) {
+    const code = readByte("an energy code");
+    const name = codeToEnergy[code];
+    if (!name) throw new Error(`Unknown energy code: ${code}.`);
+    energies.push(name);
+  }
+
+  if (offset !== bytes.length) throw new Error("Payload has unexpected trailing bytes.");
+  if (trainerCount + pokemonCount !== 20) {
+    throw new Error(`Payload contains ${trainerCount + pokemonCount} cards; expected 20.`);
+  }
+  return { trainers, pokemon, energies };
+}

@@ -1,9 +1,12 @@
 
 import QRCode from "qrcode";
 import "./styles.css";
-import { encodeDeck, bytesToBase64, ENERGY_CODES } from "./encoder.js";
+import { encodeDeck, bytesToBase64, base64ToBytes, decodeDeck, ENERGY_CODES } from "./encoder.js";
 
-const DATA_URL = "https://cdn.jsdelivr.net/npm/pokemon-tcg-pocket-database/dist/cards.extra.json";
+const CDN_BASE = "https://cdn.jsdelivr.net/npm/pokemon-tcg-pocket-database/dist";
+const LOCAL_BASE = `${import.meta.env.BASE_URL}data`;
+const IMAGE_CDN = "https://cdn.jsdelivr.net/gh/flibustier/pokemon-tcg-exchange@main/public/images/cards-by-set";
+const IMAGE_FALLBACK = "https://raw.githubusercontent.com/flibustier/pokemon-tcg-exchange/main/public/images/cards-by-set";
 const IMAGE_RE = /^c(PK|TR)_(\d+)_(\d+)_(\d+)_(.+)_([A-Z]+)\.webp$/;
 
 const state = {
@@ -15,6 +18,7 @@ const state = {
   type: "all",
   set: "all",
   generatedBase64: "",
+  setInfo: new Map(),
 };
 
 document.querySelector("#app").innerHTML = `
@@ -25,7 +29,7 @@ document.querySelector("#app").innerHTML = `
       <div><h1>Pocket Deck QR Builder</h1><small>Build a deck and scan it directly into Pokémon TCG Pocket</small></div>
     </div>
     <div class="top-actions">
-      <button class="btn btn-secondary" id="importBtn">Import deck JSON</button>
+      <button class="btn btn-secondary" id="importBtn">Import deck</button>
       <button class="btn btn-secondary" id="exportBtn">Export deck JSON</button>
       <button class="btn btn-danger" id="clearBtn">Clear deck</button>
     </div>
@@ -136,13 +140,24 @@ function uniqueFunctionalCards(raw) {
 }
 
 function populateSetFilter() {
-  const sets = [...new Set(state.cards.map(card => card.set))].sort();
+  const sets = [...new Set(state.cards.map(card => card.set))];
+  // Newest sets first, using release dates from sets.json when available.
+  sets.sort((a, b) => {
+    const dateA = state.setInfo.get(a)?.releaseDate || "0000-00-00";
+    const dateB = state.setInfo.get(b)?.releaseDate || "0000-00-00";
+    return dateB.localeCompare(dateA) || a.localeCompare(b);
+  });
   for (const set of sets) {
     const option = document.createElement("option");
     option.value = set;
-    option.textContent = set;
+    const name = state.setInfo.get(set)?.name?.en;
+    option.textContent = name ? `${set} · ${name}` : set;
     els.setFilter.appendChild(option);
   }
+}
+
+function cardImageUrl(base, card) {
+  return `${base}/${card.set}/${card.number}.webp`;
 }
 
 function applyFilters() {
@@ -171,7 +186,10 @@ function renderResults() {
     tile.className = "card-tile";
     const initials = card.name.split(/\s+/).slice(0,2).map(x => x[0]).join("");
     tile.innerHTML = `
-      <div class="card-art">${initials}</div>
+      <div class="card-art">
+        <span class="card-art-fallback">${initials}</span>
+        <img loading="lazy" alt="" src="${cardImageUrl(IMAGE_CDN, card)}">
+      </div>
       <div class="card-body">
         <div class="card-name">${card.name}</div>
         <div class="meta">${card.set} #${card.number} · ID ${card.functionalId}</div>
@@ -180,6 +198,15 @@ function renderResults() {
           <button class="btn btn-primary">Add${cardQuantity(card) ? ` (${cardQuantity(card)})` : ""}</button>
         </div>
       </div>`;
+    const img = tile.querySelector("img");
+    img.onerror = () => {
+      if (!img.dataset.retried) {
+        img.dataset.retried = "1";
+        img.src = cardImageUrl(IMAGE_FALLBACK, card);
+      } else {
+        img.remove();
+      }
+    };
     tile.querySelector("button").addEventListener("click", () => addCard(card));
     els.results.appendChild(tile);
   }
@@ -298,24 +325,64 @@ function exportDeck() {
 }
 
 function openImportModal() {
-  els.modalTitle.textContent = "Import deck JSON";
-  els.modalHelp.textContent = "Paste the contents of a previously exported deck JSON file.";
+  els.modalTitle.textContent = "Import deck";
+  els.modalHelp.textContent = "Paste a previously exported deck JSON, or the Base64 payload from a share QR code.";
   els.modalText.value = "";
   els.modalBackdrop.classList.add("visible");
 }
 
-function importDeck() {
+function importDeckJson(text) {
+  const data = JSON.parse(text);
+  if (!Array.isArray(data.cards) || !Array.isArray(data.energies)) throw new Error("Invalid deck JSON.");
+  const total = data.cards.reduce((sum, card) => sum + Number(card.quantity || 0), 0);
+  if (total > 20) throw new Error("Imported deck contains more than 20 cards.");
+  state.deck = data.cards.map(card => ({...card, quantity: Number(card.quantity)}));
+  state.energies = new Set(data.energies);
+  setMessage("Deck imported.", "success");
+}
+
+function importDeckPayload(text) {
+  let bytes;
   try {
-    const data = JSON.parse(els.modalText.value);
-    if (!Array.isArray(data.cards) || !Array.isArray(data.energies)) throw new Error("Invalid deck JSON.");
-    const total = data.cards.reduce((sum, card) => sum + Number(card.quantity || 0), 0);
-    if (total > 20) throw new Error("Imported deck contains more than 20 cards.");
-    state.deck = data.cards.map(card => ({...card, quantity: Number(card.quantity)}));
-    state.energies = new Set(data.energies);
+    bytes = base64ToBytes(text);
+  } catch {
+    throw new Error("That doesn't look like valid deck JSON or a Base64 QR payload.");
+  }
+  const { trainers, pokemon, energies } = decodeDeck(bytes);
+
+  const byId = new Map(state.cards.map(card => [`${card.kind}-${card.functionalId}`, card]));
+  const counts = new Map();
+  for (const id of trainers) counts.set(`trainer-${id}`, (counts.get(`trainer-${id}`) || 0) + 1);
+  for (const id of pokemon) counts.set(`pokemon-${id}`, (counts.get(`pokemon-${id}`) || 0) + 1);
+
+  const missing = [];
+  const deck = [];
+  for (const [key, quantity] of counts) {
+    const card = byId.get(key);
+    if (!card) {
+      missing.push(key.replace("-", " ID "));
+      continue;
+    }
+    deck.push({ ...card, quantity: Math.min(2, quantity) });
+  }
+  if (missing.length) {
+    throw new Error(`Unknown cards in payload (${missing.join(", ")}). The card database may not include them yet.`);
+  }
+  state.deck = deck;
+  state.energies = new Set(energies);
+  setMessage("Deck imported from QR payload.", "success");
+}
+
+function importDeck() {
+  const text = els.modalText.value.trim();
+  try {
+    if (!text) throw new Error("Paste a deck JSON or QR payload first.");
+    if (text.startsWith("{")) importDeckJson(text);
+    else importDeckPayload(text);
     els.modalBackdrop.classList.remove("visible");
     renderDeck();
     renderEnergies();
-    setMessage("Deck imported.", "success");
+    renderResults();
   } catch (error) {
     alert(error.message);
   }
@@ -349,12 +416,32 @@ els.modalBackdrop.onclick = event => {
   if (event.target === els.modalBackdrop) els.modalBackdrop.classList.remove("visible");
 };
 
+async function fetchJsonWithFallback(paths) {
+  let lastError;
+  for (const path of paths) {
+    try {
+      const response = await fetch(path);
+      if (!response.ok) throw new Error(`Request failed (${response.status}) for ${path}`);
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 async function bootstrap() {
   setMessage("Loading card database…");
   try {
-    const response = await fetch(DATA_URL);
-    if (!response.ok) throw new Error(`Card database request failed (${response.status}).`);
-    const raw = await response.json();
+    // Prefer the live CDN (always the newest published set), fall back to the
+    // snapshot bundled with the site.
+    const [raw, sets] = await Promise.all([
+      fetchJsonWithFallback([`${CDN_BASE}/cards.extra.json`, `${LOCAL_BASE}/cards.extra.json`]),
+      fetchJsonWithFallback([`${CDN_BASE}/sets.json`, `${LOCAL_BASE}/sets.json`]).catch(() => null),
+    ]);
+    if (sets) {
+      for (const entry of Object.values(sets).flat()) state.setInfo.set(entry.code, entry);
+    }
     state.cards = uniqueFunctionalCards(raw);
     populateSetFilter();
     applyFilters();

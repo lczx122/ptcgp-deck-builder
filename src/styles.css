@@ -68,9 +68,13 @@ button { cursor: pointer; }
   background: linear-gradient(180deg, #fff, #f8fafc); display: flex; flex-direction: column;
 }
 .card-art {
-  aspect-ratio: 5/3; display: grid; place-items: center;
+  aspect-ratio: 367/512; position: relative; display: grid; place-items: center;
   background: radial-gradient(circle at 30% 30%, #dbeafe, #eef2ff);
   color: #64748b; font-size: 2rem; font-weight: 900;
+}
+.card-art img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover;
 }
 .card-body { padding: 12px; display: grid; gap: 7px; }
 .card-name { font-weight: 800; line-height: 1.25; }
