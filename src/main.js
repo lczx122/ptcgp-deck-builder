@@ -4,26 +4,15 @@ import "./styles.css";
 import { encodeDeck, bytesToBase64, base64ToBytes, decodeDeck, ENERGY_CODES } from "./encoder.js";
 import { analyzeDeck } from "./deckStats.js";
 import { encodeShare, decodeShare } from "./deckShare.js";
+import { imageSourcesFor } from "./cardImages.js";
 
 const STORAGE_KEY = "ptcgp:decks";
 
 const CDN_BASE = "https://cdn.jsdelivr.net/npm/pokemon-tcg-pocket-database/dist";
 const LOCAL_BASE = `${import.meta.env.BASE_URL}data`;
-// Community mirrors that host card art as cards-by-set/{set}/{number}.webp.
-const IMAGE_MIRRORS = [
-  "https://cdn.jsdelivr.net/gh/flibustier/pokemon-tcg-exchange@main/public/images/cards-by-set",
-  "https://raw.githubusercontent.com/flibustier/pokemon-tcg-exchange/main/public/images/cards-by-set",
-];
-// Self-hosted art in the repo, for sets a mirror hasn't published yet (e.g. a
-// set released days ago). public/images/manifest.json lists which set codes are
-// self-hosted; only those try the local path first, so every other card goes
-// straight to the mirror with no wasted request.
+// Self-hosted art in the repo, for sets a mirror hasn't published yet.
+// public/images/manifest.json lists which set codes are self-hosted.
 const LOCAL_IMAGES = `${import.meta.env.BASE_URL}images/cards-by-set`;
-// LimitlessTCG's CDN — a comprehensive, current card-art host used as a
-// fallback for cards the community mirror hasn't published yet (verified:
-// serves cross-origin with no hotlink protection). Its URL shape differs:
-// pocket/{SET}/{SET}_{NNN}_EN.webp with a zero-padded 3-digit number.
-const LIMITLESS_BASE = "https://limitlesstcg.nyc3.cdn.digitaloceanspaces.com/pocket";
 const IMAGE_RE = /^c(PK|TR)_(\d+)_(\d+)_(\d+)_(.+)_([A-Z]+)\.webp$/;
 
 const state = {
@@ -42,6 +31,7 @@ const state = {
   elements: new Map(), // image filename -> element, for the type badge
   selfHostedSets: new Set(), // set codes whose art is self-hosted in the repo
   deckName: "",
+  variants: new Map(), // functional key -> [{set, number, rarity}] all printings
 };
 
 document.querySelector("#app").innerHTML = `
@@ -138,6 +128,10 @@ document.querySelector("#app").innerHTML = `
       <h3 id="lightboxName"></h3>
       <div class="meta" id="lightboxMeta"></div>
       <div class="lightbox-badges" id="lightboxBadges"></div>
+      <div class="variant-block" id="lightboxVariantBlock" hidden>
+        <div class="variant-title">Other prints (cosmetic — same deck code)</div>
+        <div class="variant-strip" id="lightboxVariants"></div>
+      </div>
       <button class="btn btn-primary" id="lightboxAdd">Add to deck</button>
     </div>
   </div>
@@ -163,7 +157,8 @@ const els = Object.fromEntries([
   "modalHelp","modalText","modalCancel","modalConfirm",
   "deckName","savedDecks","saveDeckBtn","deleteDeckBtn","shareBtn",
   "rarityFilter","sortSelect","exToggle","lightbox","lightboxClose","lightboxImg",
-  "lightboxName","lightboxMeta","lightboxBadges","lightboxAdd","themeToggle"
+  "lightboxName","lightboxMeta","lightboxBadges","lightboxAdd","themeToggle",
+  "lightboxVariantBlock","lightboxVariants"
 ].map(id => [id, document.getElementById(id)]));
 
 function setMessage(text, type = "") {
@@ -192,12 +187,20 @@ function normalizeCard(card) {
 }
 
 function uniqueFunctionalCards(raw) {
-  const map = new Map();
+  const map = new Map();          // key -> representative (base) card for the builder
+  const variants = new Map();     // key -> [{set, number, rarity}] every printing
   for (const item of raw) {
     const card = normalizeCard(item);
     if (!card) continue;
     if (!map.has(card.key)) map.set(card.key, card);
+    if (!variants.has(card.key)) variants.set(card.key, []);
+    variants.get(card.key).push({ set: card.set, number: card.number, rarity: card.rarity });
   }
+  // Order each card's printings base-rarity first, so the showcase reads low→high.
+  for (const list of variants.values()) {
+    list.sort((a, b) => (RARITY_RANK[a.rarity] ?? 0) - (RARITY_RANK[b.rarity] ?? 0) || a.number - b.number);
+  }
+  state.variants = variants;
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -244,13 +247,23 @@ function populateRarityFilter() {
   }
 }
 
-// Point an <img> at a card's art, walking the fallback chain, then giving up
-// (leaving the initials placeholder / no image) when every source fails.
-function loadCardImage(img, card) {
+// Ordered art URLs for a set/number (self-hosted → mirrors → Limitless).
+function sourcesFor(set, number) {
+  return imageSourcesFor(set, number, {
+    localBase: LOCAL_IMAGES,
+    selfHosted: state.selfHostedSets.has(set),
+  });
+}
+function cardImageSources(card) {
+  return sourcesFor(card.set, card.number);
+}
+
+// Point an <img> at a list of source URLs, walking the fallback chain, then
+// hiding it (revealing the initials placeholder) when every source fails.
+function loadImageFromSources(img, sources) {
   const holder = img.parentElement;
-  const sources = cardImageSources(card);
   let attempt = 0;
-  img.style.display = ""; // reset (hidden after a previous total failure)
+  img.style.display = "";
   if (holder) holder.classList.add("loading");
   img.onload = () => { if (holder) holder.classList.remove("loading"); };
   img.onerror = () => {
@@ -259,33 +272,14 @@ function loadCardImage(img, card) {
       img.src = sources[attempt];
     } else {
       img.onerror = null;
-      img.style.display = "none"; // reveal initials placeholder
+      img.style.display = "none";
       if (holder) holder.classList.remove("loading");
     }
   };
   img.src = sources[0];
 }
-
-// Community-mirror URL shape: cards-by-set/{set}/{number}.webp
-function cardImageUrl(base, card) {
-  return `${base}/${card.set}/${card.number}.webp`;
-}
-
-// LimitlessTCG URL shape: pocket/{set}/{set}_{NNN}_EN.webp (3-digit number).
-function limitlessImageUrl(card) {
-  const n3 = String(card.number).padStart(3, "0");
-  return `${LIMITLESS_BASE}/${card.set}/${card.set}_${n3}_EN.webp`;
-}
-
-// Ordered list of URLs to try for a card's art, then the initials placeholder.
-// Self-hosted sets try the repo first; the community mirrors cover most cards;
-// Limitless is the last-resort mirror that catches brand-new sets (e.g. B4)
-// the community mirror hasn't published yet.
-function cardImageSources(card) {
-  const mirrorBases = state.selfHostedSets.has(card.set)
-    ? [LOCAL_IMAGES, ...IMAGE_MIRRORS]
-    : IMAGE_MIRRORS;
-  return [...mirrorBases.map(base => cardImageUrl(base, card)), limitlessImageUrl(card)];
+function loadCardImage(img, card) {
+  loadImageFromSources(img, cardImageSources(card));
 }
 
 function applyFilters() {
@@ -666,18 +660,42 @@ function updateLightboxAdd(card) {
   els.lightboxAdd.disabled = q >= 2 || deckTotal() >= 20;
 }
 
+function setLightboxArt(card, variant) {
+  loadImageFromSources(els.lightboxImg, sourcesFor(variant.set, variant.number));
+  const rar = RARITY_LABELS[variant.rarity] || variant.rarity || "";
+  els.lightboxMeta.textContent =
+    `${variant.set} #${variant.number} · ID ${card.functionalId}${rar ? ` · ${rar}` : ""}`;
+}
+
+function renderVariants(card) {
+  const list = state.variants.get(card.key) || [];
+  if (list.length <= 1) { els.lightboxVariantBlock.hidden = true; return; }
+  els.lightboxVariantBlock.hidden = false;
+  els.lightboxVariants.innerHTML = list.map((v, i) => `
+    <button class="variant" data-i="${i}" title="${escapeHtml(v.set)} #${v.number} · ${escapeHtml(RARITY_LABELS[v.rarity] || v.rarity || "")}">
+      <span class="variant-thumb"><img loading="lazy" alt=""></span>
+      <span class="variant-rar">${escapeHtml(v.rarity || "?")}</span>
+    </button>`).join("");
+  [...els.lightboxVariants.querySelectorAll(".variant")].forEach((btn, i) => {
+    loadImageFromSources(btn.querySelector("img"), sourcesFor(list[i].set, list[i].number));
+    btn.onclick = () => {
+      els.lightboxVariants.querySelectorAll(".variant").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      setLightboxArt(card, list[i]);
+    };
+  });
+}
+
 function openLightbox(card) {
   els.lightboxName.textContent = card.name;
-  const rar = RARITY_LABELS[card.rarity] || card.rarity || "";
-  els.lightboxMeta.textContent =
-    `${card.set} #${card.number} · ID ${card.functionalId}${rar ? ` · ${rar}` : ""}`;
   const badges = [`<span class="badge">${card.kind === "pokemon" ? "Pokémon" : "Trainer"}</span>`];
   if (card.element) {
     badges.push(`<span class="type-chip type-${card.element}"><i></i>${ENERGY_LABELS[card.element] || card.element}</span>`);
   }
   if (isEx(card)) badges.push(`<span class="badge badge-ex">ex</span>`);
   els.lightboxBadges.innerHTML = badges.join("");
-  loadCardImage(els.lightboxImg, card);
+  setLightboxArt(card, { set: card.set, number: card.number, rarity: card.rarity });
+  renderVariants(card);
   els.lightboxAdd.onclick = () => { addCard(card); updateLightboxAdd(card); };
   updateLightboxAdd(card);
   els.lightbox.classList.add("visible");
