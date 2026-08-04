@@ -52,6 +52,7 @@ document.querySelector("#app").innerHTML = `
       <div><h1>Pocket Deck QR Builder</h1><small>Build a deck and scan it directly into Pokémon TCG Pocket</small></div>
     </div>
     <div class="top-actions">
+      <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
       <button class="btn btn-secondary" id="importBtn">Import deck</button>
       <button class="btn btn-secondary" id="exportBtn">Export deck JSON</button>
       <button class="btn btn-danger" id="clearBtn">Clear deck</button>
@@ -162,7 +163,7 @@ const els = Object.fromEntries([
   "modalHelp","modalText","modalCancel","modalConfirm",
   "deckName","savedDecks","saveDeckBtn","deleteDeckBtn","shareBtn",
   "rarityFilter","sortSelect","exToggle","lightbox","lightboxClose","lightboxImg",
-  "lightboxName","lightboxMeta","lightboxBadges","lightboxAdd"
+  "lightboxName","lightboxMeta","lightboxBadges","lightboxAdd","themeToggle"
 ].map(id => [id, document.getElementById(id)]));
 
 function setMessage(text, type = "") {
@@ -246,13 +247,21 @@ function populateRarityFilter() {
 // Point an <img> at a card's art, walking the fallback chain, then giving up
 // (leaving the initials placeholder / no image) when every source fails.
 function loadCardImage(img, card) {
+  const holder = img.parentElement;
   const sources = cardImageSources(card);
   let attempt = 0;
   img.style.display = ""; // reset (hidden after a previous total failure)
+  if (holder) holder.classList.add("loading");
+  img.onload = () => { if (holder) holder.classList.remove("loading"); };
   img.onerror = () => {
     attempt += 1;
-    if (attempt < sources.length) img.src = sources[attempt];
-    else { img.onerror = null; img.style.display = "none"; } // reveal initials placeholder
+    if (attempt < sources.length) {
+      img.src = sources[attempt];
+    } else {
+      img.onerror = null;
+      img.style.display = "none"; // reveal initials placeholder
+      if (holder) holder.classList.remove("loading");
+    }
   };
   img.src = sources[0];
 }
@@ -369,12 +378,15 @@ function renderDeck() {
       const row = document.createElement("div");
       row.className = "deck-row";
       row.innerHTML = `
-        <div><strong>${card.name}</strong><div class="meta">${card.kind} · ID ${card.functionalId}</div></div>
+        <div class="deck-thumb"><img loading="lazy" alt=""></div>
+        <div><strong>${escapeHtml(card.name)}</strong><div class="meta">${card.kind} · ${card.set} #${card.number}</div></div>
         <div class="qty-controls">
           <button class="qty-btn minus">−</button>
           <strong>${card.quantity}</strong>
           <button class="qty-btn plus">+</button>
         </div>`;
+      loadCardImage(row.querySelector(".deck-thumb img"), card);
+      row.querySelector(".deck-thumb").onclick = () => openLightbox(card);
       row.querySelector(".minus").onclick = () => adjustQuantity(card.key, -1);
       row.querySelector(".plus").onclick = () => adjustQuantity(card.key, 1);
       els.deckList.appendChild(row);
@@ -671,6 +683,28 @@ function openLightbox(card) {
   els.lightbox.classList.add("visible");
 }
 function closeLightbox() { els.lightbox.classList.remove("visible"); }
+
+// ---- Theme ----
+const THEME_KEY = "ptcgp:theme";
+function effectiveTheme() {
+  return document.documentElement.getAttribute("data-theme")
+    || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+}
+function setThemeIcon() {
+  els.themeToggle.textContent = effectiveTheme() === "dark" ? "☀️" : "🌙";
+}
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "dark" || saved === "light") document.documentElement.setAttribute("data-theme", saved);
+  setThemeIcon();
+}
+els.themeToggle.onclick = () => {
+  const next = effectiveTheme() === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_KEY, next);
+  setThemeIcon();
+};
+initTheme();
 
 els.rarityFilter.onchange = event => { state.rarity = event.target.value; applyFilters(); };
 els.sortSelect.onchange = event => { state.sort = event.target.value; applyFilters(); };
