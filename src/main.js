@@ -3,6 +3,9 @@ import QRCode from "qrcode";
 import "./styles.css";
 import { encodeDeck, bytesToBase64, base64ToBytes, decodeDeck, ENERGY_CODES } from "./encoder.js";
 import { analyzeDeck } from "./deckStats.js";
+import { encodeShare, decodeShare } from "./deckShare.js";
+
+const STORAGE_KEY = "ptcgp:decks";
 
 const CDN_BASE = "https://cdn.jsdelivr.net/npm/pokemon-tcg-pocket-database/dist";
 const LOCAL_BASE = `${import.meta.env.BASE_URL}data`;
@@ -35,6 +38,7 @@ const state = {
   setInfo: new Map(),
   elements: new Map(), // image filename -> element, for the type badge
   selfHostedSets: new Set(), // set codes whose art is self-hosted in the repo
+  deckName: "",
 };
 
 document.querySelector("#app").innerHTML = `
@@ -70,6 +74,15 @@ document.querySelector("#app").innerHTML = `
     </section>
 
     <aside class="panel deck-panel">
+      <div class="deck-tools">
+        <input class="input" id="deckName" placeholder="Deck name (optional)" maxlength="60" />
+        <div class="deck-tools-row">
+          <select class="select" id="savedDecks"><option value="">Load saved deck…</option></select>
+          <button class="btn btn-secondary" id="saveDeckBtn">Save</button>
+          <button class="btn btn-secondary" id="deleteDeckBtn" title="Delete the saved deck with this name">Delete</button>
+          <button class="btn btn-secondary" id="shareBtn">Share link</button>
+        </div>
+      </div>
       <div class="deck-summary">
         <div>
           <strong>Your deck</strong>
@@ -122,13 +135,17 @@ const els = Object.fromEntries([
   "results","searchInput","typeFilter","setFilter","deckList","deckCount","progressBar",
   "energyGrid","statsSection","generateBtn","message","qrWrap","qrCanvas","payloadInput","copyBtn",
   "downloadBtn","clearBtn","importBtn","exportBtn","modalBackdrop","modalTitle",
-  "modalHelp","modalText","modalCancel","modalConfirm"
+  "modalHelp","modalText","modalCancel","modalConfirm",
+  "deckName","savedDecks","saveDeckBtn","deleteDeckBtn","shareBtn"
 ].map(id => [id, document.getElementById(id)]));
 
 function setMessage(text, type = "") {
   els.message.textContent = text;
   els.message.className = `message ${type}`;
 }
+
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 function normalizeCard(card) {
   const match = IMAGE_RE.exec(card.image || "");
@@ -381,6 +398,7 @@ async function generateQR() {
 function exportDeck() {
   const data = {
     version: 1,
+    name: state.deckName || "",
     cards: state.deck.map(({key,name,set,number,kind,functionalId,quantity}) => ({
       key,name,set,number,kind,functionalId,quantity
     })),
@@ -409,6 +427,8 @@ function importDeckJson(text) {
   if (total > 20) throw new Error("Imported deck contains more than 20 cards.");
   state.deck = data.cards.map(card => ({...card, quantity: Number(card.quantity)}));
   state.energies = new Set(data.energies);
+  state.deckName = typeof data.name === "string" ? data.name : "";
+  els.deckName.value = state.deckName;
   setMessage("Deck imported.", "success");
 }
 
@@ -458,6 +478,111 @@ function importDeck() {
     alert(error.message);
   }
 }
+
+// ---- Save & share decks ----
+
+function renderAll() {
+  renderDeck();
+  renderEnergies();
+  renderResults();
+}
+
+function readSavedDecks() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
+  catch { return {}; }
+}
+function writeSavedDecks(obj) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
+}
+function refreshSavedDecks() {
+  const decks = readSavedDecks();
+  const names = Object.keys(decks).sort((a, b) => a.localeCompare(b));
+  els.savedDecks.innerHTML = `<option value="">Load saved deck…</option>` + names.map(n => {
+    const count = (decks[n].cards || []).reduce((s, c) => s + (c.quantity || 0), 0);
+    return `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${count})</option>`;
+  }).join("");
+}
+function saveCurrentDeck() {
+  const name = els.deckName.value.trim();
+  if (!name) return setMessage("Enter a deck name to save.", "error");
+  if (!state.deck.length) return setMessage("Add some cards before saving.", "error");
+  const decks = readSavedDecks();
+  decks[name] = { name, energies: [...state.energies], cards: state.deck };
+  writeSavedDecks(decks);
+  state.deckName = name;
+  refreshSavedDecks();
+  setMessage(`Saved “${name}”.`, "success");
+}
+function deleteSavedDeck() {
+  const name = els.deckName.value.trim();
+  const decks = readSavedDecks();
+  if (!name || !decks[name]) return setMessage("No saved deck with that name.", "error");
+  delete decks[name];
+  writeSavedDecks(decks);
+  refreshSavedDecks();
+  setMessage(`Deleted “${name}”.`, "success");
+}
+function loadSavedDeck(name) {
+  const d = readSavedDecks()[name];
+  if (!d) return;
+  state.deck = (d.cards || []).map(c => ({ ...c, quantity: Number(c.quantity) }));
+  state.energies = new Set(d.energies || []);
+  state.deckName = d.name || name;
+  els.deckName.value = state.deckName;
+  renderAll();
+  setMessage(`Loaded “${name}”.`, "success");
+}
+
+// Resolve minimal entries [{kind, functionalId, quantity}] to full deck cards.
+function resolveEntries(entries) {
+  const byId = new Map(state.cards.map(c => [`${c.kind}-${c.functionalId}`, c]));
+  const deck = [];
+  const missing = [];
+  for (const e of entries) {
+    const card = byId.get(`${e.kind}-${e.functionalId}`);
+    if (card) deck.push({ ...card, quantity: Math.min(2, Number(e.quantity) || 1) });
+    else missing.push(`${e.kind} ID ${e.functionalId}`);
+  }
+  return { deck, missing };
+}
+
+function shareLink() {
+  const code = encodeShare({ name: els.deckName.value.trim(), energies: [...state.energies], cards: state.deck });
+  const url = `${location.origin}${location.pathname}#deck=${code}`;
+  navigator.clipboard.writeText(url)
+    .then(() => setMessage("Share link copied to clipboard.", "success"))
+    .catch(() => window.prompt("Copy this share link:", url));
+}
+
+function loadFromHash() {
+  const match = location.hash.match(/[#&]deck=([^&]+)/);
+  if (!match) return;
+  try {
+    const { name, energies, cards } = decodeShare(match[1]);
+    const { deck, missing } = resolveEntries(cards);
+    state.deck = deck;
+    state.energies = new Set(energies);
+    state.deckName = name;
+    els.deckName.value = name;
+    history.replaceState(null, "", location.pathname + location.search);
+    renderAll();
+    setMessage(missing.length
+      ? `Loaded shared deck — ${missing.length} unknown card(s) skipped.`
+      : `Loaded shared deck${name ? ` “${name}”` : ""}.`, missing.length ? "error" : "success");
+  } catch {
+    setMessage("That shared deck link is invalid.", "error");
+  }
+}
+
+els.deckName.oninput = event => { state.deckName = event.target.value; };
+els.saveDeckBtn.onclick = saveCurrentDeck;
+els.deleteDeckBtn.onclick = deleteSavedDeck;
+els.shareBtn.onclick = shareLink;
+els.savedDecks.onchange = event => {
+  const name = event.target.value;
+  event.target.value = "";
+  if (name) loadSavedDeck(name);
+};
 
 els.searchInput.oninput = event => { state.query = event.target.value; applyFilters(); };
 els.typeFilter.onchange = event => { state.type = event.target.value; applyFilters(); };
@@ -530,7 +655,10 @@ async function bootstrap() {
     applyFilters();
     renderDeck();
     renderEnergies();
+    refreshSavedDecks();
     setMessage(`Loaded ${state.cards.length} functional cards.`, "success");
+    loadFromHash(); // a shared-deck link overrides the empty starting deck
+
   } catch (error) {
     setMessage(`${error.message} Check your connection and reload.`, "error");
   }
