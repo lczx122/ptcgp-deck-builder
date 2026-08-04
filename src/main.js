@@ -86,10 +86,11 @@ document.querySelector("#app").innerHTML = `
         </div>
       </div>
       <div class="deck-summary">
-        <div>
+        <div class="deck-summary-main">
           <strong>Your deck</strong>
           <div class="progress"><div id="progressBar" style="width:0%"></div></div>
         </div>
+        <button class="btn btn-secondary preview-btn" id="previewBtn">Preview</button>
         <div class="counter"><span id="deckCount">0</span>/20</div>
       </div>
       <div id="deckList" class="deck-list"></div>
@@ -137,6 +138,17 @@ document.querySelector("#app").innerHTML = `
   </div>
 </div>
 
+<div class="preview" id="deckPreview">
+  <div class="preview-inner">
+    <button class="lightbox-close" id="previewClose" aria-label="Close">×</button>
+    <div class="preview-head">
+      <h3 id="previewTitle">Deck preview</h3>
+      <div class="preview-sub"><span id="previewCount"></span><span class="preview-energy" id="previewEnergy"></span></div>
+    </div>
+    <div class="preview-grid" id="previewGrid"></div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal">
     <h3 id="modalTitle">Import deck JSON</h3>
@@ -158,7 +170,8 @@ const els = Object.fromEntries([
   "deckName","savedDecks","saveDeckBtn","deleteDeckBtn","shareBtn",
   "rarityFilter","sortSelect","exToggle","lightbox","lightboxClose","lightboxImg",
   "lightboxName","lightboxMeta","lightboxBadges","lightboxAdd","themeToggle",
-  "lightboxVariantBlock","lightboxVariants"
+  "lightboxVariantBlock","lightboxVariants",
+  "previewBtn","deckPreview","previewClose","previewTitle","previewCount","previewEnergy","previewGrid"
 ].map(id => [id, document.getElementById(id)]));
 
 function setMessage(text, type = "") {
@@ -702,6 +715,43 @@ function openLightbox(card) {
 }
 function closeLightbox() { els.lightbox.classList.remove("visible"); }
 
+// ---- Visual deck preview (in-game-style grid) ----
+const initialsOf = card => card.name.split(/\s+/).slice(0, 2).map(x => x[0]).join("");
+
+function openPreview() {
+  // Pokémon first, then Trainers; within each, by functional id then name —
+  // roughly mirrors how the in-game deck view groups cards.
+  const sorted = [...state.deck].sort((a, b) =>
+    (a.kind === b.kind ? 0 : a.kind === "pokemon" ? -1 : 1)
+    || a.functionalId - b.functionalId || a.name.localeCompare(b.name));
+  const copies = [];
+  for (const c of sorted) for (let i = 0; i < c.quantity; i++) copies.push(c);
+
+  els.previewTitle.textContent = state.deckName.trim() || "Deck preview";
+  els.previewCount.textContent = `${copies.length}/20 cards`;
+  const energies = [...state.energies];
+  els.previewEnergy.innerHTML = energies
+    .map(e => `<span class="type-chip type-${e}"><i></i>${ENERGY_LABELS[e] || e}</span>`).join("");
+
+  els.previewGrid.innerHTML = "";
+  copies.forEach(card => {
+    const slot = document.createElement("button");
+    slot.className = "preview-slot filled";
+    slot.innerHTML = `<span class="card-art"><span class="card-art-fallback">${initialsOf(card)}</span><img loading="lazy" alt=""></span>`;
+    loadCardImage(slot.querySelector("img"), card);
+    slot.onclick = () => openLightbox(card);
+    els.previewGrid.appendChild(slot);
+  });
+  for (let i = copies.length; i < 20; i++) {
+    const slot = document.createElement("div");
+    slot.className = "preview-slot empty";
+    slot.innerHTML = `<span>${i + 1}</span>`;
+    els.previewGrid.appendChild(slot);
+  }
+  els.deckPreview.classList.add("visible");
+}
+function closePreview() { els.deckPreview.classList.remove("visible"); }
+
 // ---- Theme ----
 const THEME_KEY = "ptcgp:theme";
 function effectiveTheme() {
@@ -734,8 +784,15 @@ els.exToggle.onclick = () => {
 };
 els.lightboxClose.onclick = closeLightbox;
 els.lightbox.onclick = event => { if (event.target === els.lightbox) closeLightbox(); };
+els.previewBtn.onclick = openPreview;
+els.previewClose.onclick = closePreview;
+els.deckPreview.onclick = event => { if (event.target === els.deckPreview) closePreview(); };
 document.addEventListener("keydown", event => {
-  if (event.key === "Escape") { closeLightbox(); els.modalBackdrop.classList.remove("visible"); }
+  if (event.key === "Escape") {
+    closeLightbox();
+    closePreview();
+    els.modalBackdrop.classList.remove("visible");
+  }
 });
 
 els.searchInput.oninput = event => { state.query = event.target.value; applyFilters(); };

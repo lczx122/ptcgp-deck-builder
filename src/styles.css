@@ -153,7 +153,9 @@ button { cursor: pointer; }
 .deck-tools-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .deck-tools-row .select { flex: 1 1 140px; min-width: 0; }
 .deck-tools-row .btn { padding: 9px 12px; }
-.deck-summary { padding: 16px 18px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--border-soft); }
+.deck-summary { padding: 16px 18px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--border-soft); }
+.deck-summary-main { flex: 1; min-width: 0; }
+.preview-btn { padding: 8px 12px; }
 .counter { font-weight: 900; font-size: 1.2rem; }
 .progress { height: 9px; background: var(--chip); border-radius: 999px; overflow: hidden; margin-top: 8px; }
 .progress > div { height: 100%; background: linear-gradient(90deg, var(--primary), #22c55e); transition: width .2s ease; }
@@ -251,6 +253,31 @@ button { cursor: pointer; }
 .lightbox-info h3 { margin: 0; font-size: 1.15rem; }
 .lightbox-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .lightbox-info .btn { margin-top: auto; }
+
+.preview {
+  position: fixed; inset: 0; background: var(--overlay); z-index: 130;
+  display: none; align-items: flex-start; justify-content: center; padding: 24px 16px; overflow: auto;
+}
+.preview.visible { display: flex; }
+.preview-inner {
+  background: var(--surface); color: var(--text); border-radius: 20px; padding: 22px;
+  width: min(920px, 100%); position: relative; box-shadow: var(--shadow-lg); margin: auto;
+}
+.preview-head { margin-bottom: 16px; padding-right: 40px; }
+.preview-head h3 { margin: 0 0 4px; font-size: 1.2rem; }
+.preview-sub { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: .85rem; }
+.preview-energy { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.preview-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.preview-slot { padding: 0; border: 0; background: transparent; border-radius: 9px; overflow: hidden; }
+.preview-slot.filled { cursor: zoom-in; box-shadow: 0 4px 12px #0003; transition: transform .12s ease; }
+.preview-slot.filled:hover { transform: translateY(-2px); }
+.preview-slot .card-art { border-radius: 9px; }
+.preview-slot.empty {
+  aspect-ratio: 367/512; border: 2px dashed var(--border-strong); border-radius: 9px;
+  display: grid; place-items: center; color: var(--muted); font-weight: 800; opacity: .5;
+}
+@media (max-width: 720px) { .preview-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 520px) { .preview-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; } }
 
 @media (max-width: 560px) {
   .lightbox-inner { grid-template-columns: 1fr; max-width: 340px; }
