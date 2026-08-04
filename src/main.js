@@ -2,6 +2,7 @@
 import QRCode from "qrcode";
 import "./styles.css";
 import { encodeDeck, bytesToBase64, base64ToBytes, decodeDeck, ENERGY_CODES } from "./encoder.js";
+import { analyzeDeck } from "./deckStats.js";
 
 const CDN_BASE = "https://cdn.jsdelivr.net/npm/pokemon-tcg-pocket-database/dist";
 const LOCAL_BASE = `${import.meta.env.BASE_URL}data`;
@@ -78,6 +79,8 @@ document.querySelector("#app").innerHTML = `
       </div>
       <div id="deckList" class="deck-list"></div>
 
+      <div class="stats-section" id="statsSection"></div>
+
       <div class="energy-section">
         <strong>Energy</strong>
         <div class="energy-grid" id="energyGrid"></div>
@@ -117,7 +120,7 @@ document.querySelector("#app").innerHTML = `
 
 const els = Object.fromEntries([
   "results","searchInput","typeFilter","setFilter","deckList","deckCount","progressBar",
-  "energyGrid","generateBtn","message","qrWrap","qrCanvas","payloadInput","copyBtn",
+  "energyGrid","statsSection","generateBtn","message","qrWrap","qrCanvas","payloadInput","copyBtn",
   "downloadBtn","clearBtn","importBtn","exportBtn","modalBackdrop","modalTitle",
   "modalHelp","modalText","modalCancel","modalConfirm"
 ].map(id => [id, document.getElementById(id)]));
@@ -299,6 +302,40 @@ function renderDeck() {
     }
   }
   els.qrWrap.classList.remove("visible");
+  renderStats();
+}
+
+const ENERGY_LABELS = {
+  grass: "Grass", fire: "Fire", water: "Water", lightning: "Lightning",
+  psychic: "Psychic", fighting: "Fighting", darkness: "Darkness", metal: "Metal",
+  colorless: "Colorless",
+};
+
+function renderStats() {
+  const stats = analyzeDeck(state.deck, [...state.energies]);
+  const elementChips = Object.entries(stats.elementCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([el, n]) => `<span class="type-chip type-${el}"><i></i>${ENERGY_LABELS[el] || el} ${n}</span>`)
+    .join("");
+  const unknownChip = stats.unknownElement
+    ? `<span class="type-chip type-unknown"><i></i>Unknown ${stats.unknownElement}</span>` : "";
+  const chips = elementChips || unknownChip
+    ? `<div class="type-chips">${elementChips}${unknownChip}</div>` : "";
+
+  const status = stats.legal
+    ? `<div class="legal-ok">✓ Legal deck — ready to share</div>` : "";
+  const warnList = stats.warnings.length
+    ? `<ul class="warn-list">${stats.warnings.map(w =>
+        `<li class="warn-${w.level}">${w.level === "error" ? "⛔" : "⚠️"} ${w.text}</li>`).join("")}</ul>` : "";
+
+  els.statsSection.innerHTML = `
+    <div class="stats-head">
+      <strong>Deck analysis</strong>
+      <span class="split">${stats.pokemonCount} Pokémon · ${stats.trainerCount} Trainer</span>
+    </div>
+    ${chips}
+    ${status}
+    ${warnList}`;
 }
 
 function renderEnergies() {
@@ -317,6 +354,7 @@ function renderEnergies() {
     };
     els.energyGrid.appendChild(button);
   }
+  renderStats();
 }
 
 async function generateQR() {
