@@ -34,6 +34,9 @@ const state = {
   query: "",
   type: "all",
   set: "all",
+  rarity: "all",
+  sort: "set",
+  exOnly: false,
   generatedBase64: "",
   setInfo: new Map(),
   elements: new Map(), // image filename -> element, for the type badge
@@ -68,6 +71,14 @@ document.querySelector("#app").innerHTML = `
             <option value="trainer">Trainer</option>
           </select>
           <select class="select" id="setFilter"><option value="all">All sets</option></select>
+          <select class="select" id="rarityFilter"><option value="all">All rarities</option></select>
+          <select class="select" id="sortSelect">
+            <option value="set">Sort: Newest set</option>
+            <option value="name">Sort: Name (A–Z)</option>
+            <option value="number">Sort: Set &amp; number</option>
+            <option value="rarity">Sort: Rarity</option>
+          </select>
+          <button class="pill-toggle" id="exToggle" aria-pressed="false">ex only</button>
         </div>
       </div>
       <div class="results" id="results"></div>
@@ -118,6 +129,19 @@ document.querySelector("#app").innerHTML = `
   </main>
 </div>
 
+<div class="lightbox" id="lightbox">
+  <div class="lightbox-inner">
+    <button class="lightbox-close" id="lightboxClose" aria-label="Close">×</button>
+    <div class="lightbox-art"><img id="lightboxImg" alt="" /></div>
+    <div class="lightbox-info">
+      <h3 id="lightboxName"></h3>
+      <div class="meta" id="lightboxMeta"></div>
+      <div class="lightbox-badges" id="lightboxBadges"></div>
+      <button class="btn btn-primary" id="lightboxAdd">Add to deck</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal">
     <h3 id="modalTitle">Import deck JSON</h3>
@@ -136,7 +160,9 @@ const els = Object.fromEntries([
   "energyGrid","statsSection","generateBtn","message","qrWrap","qrCanvas","payloadInput","copyBtn",
   "downloadBtn","clearBtn","importBtn","exportBtn","modalBackdrop","modalTitle",
   "modalHelp","modalText","modalCancel","modalConfirm",
-  "deckName","savedDecks","saveDeckBtn","deleteDeckBtn","shareBtn"
+  "deckName","savedDecks","saveDeckBtn","deleteDeckBtn","shareBtn",
+  "rarityFilter","sortSelect","exToggle","lightbox","lightboxClose","lightboxImg",
+  "lightboxName","lightboxMeta","lightboxBadges","lightboxAdd"
 ].map(id => [id, document.getElementById(id)]));
 
 function setMessage(text, type = "") {
@@ -191,6 +217,46 @@ function populateSetFilter() {
   }
 }
 
+const RARITY_LABELS = {
+  C: "Common", U: "Uncommon", R: "Rare", RR: "Double Rare (ex)",
+  AR: "Art Rare", SR: "Super Rare", SAR: "Special Art Rare",
+  SSR: "Shiny Super Rare", S: "Shiny", UR: "Crown Rare", IM: "Immersive",
+};
+const RARITY_RANK = { C: 0, U: 1, R: 2, RR: 3, AR: 4, SR: 5, SAR: 6, SSR: 7, S: 8, IM: 9, UR: 10 };
+const isEx = card => /\sex$/i.test(card.name);
+const setDate = s => state.setInfo.get(s)?.releaseDate || "0000-00-00";
+const SORTERS = {
+  name: (a, b) => a.name.localeCompare(b.name),
+  set: (a, b) => setDate(b.set).localeCompare(setDate(a.set)) || a.set.localeCompare(b.set) || a.number - b.number,
+  number: (a, b) => a.set.localeCompare(b.set) || a.number - b.number,
+  rarity: (a, b) => (RARITY_RANK[b.rarity] ?? -1) - (RARITY_RANK[a.rarity] ?? -1) || a.name.localeCompare(b.name),
+};
+
+function populateRarityFilter() {
+  const present = [...new Set(state.cards.map(c => c.rarity).filter(Boolean))]
+    .sort((a, b) => (RARITY_RANK[a] ?? 99) - (RARITY_RANK[b] ?? 99));
+  for (const r of present) {
+    const option = document.createElement("option");
+    option.value = r;
+    option.textContent = RARITY_LABELS[r] || r;
+    els.rarityFilter.appendChild(option);
+  }
+}
+
+// Point an <img> at a card's art, walking the fallback chain, then giving up
+// (leaving the initials placeholder / no image) when every source fails.
+function loadCardImage(img, card) {
+  const sources = cardImageSources(card);
+  let attempt = 0;
+  img.style.display = ""; // reset (hidden after a previous total failure)
+  img.onerror = () => {
+    attempt += 1;
+    if (attempt < sources.length) img.src = sources[attempt];
+    else { img.onerror = null; img.style.display = "none"; } // reveal initials placeholder
+  };
+  img.src = sources[0];
+}
+
 // Community-mirror URL shape: cards-by-set/{set}/{number}.webp
 function cardImageUrl(base, card) {
   return `${base}/${card.set}/${card.number}.webp`;
@@ -215,11 +281,14 @@ function cardImageSources(card) {
 
 function applyFilters() {
   const q = state.query.toLowerCase().trim();
-  state.filtered = state.cards.filter(card => {
-    return (!q || card.name.toLowerCase().includes(q))
-      && (state.type === "all" || card.kind === state.type)
-      && (state.set === "all" || card.set === state.set);
-  }).slice(0, 240);
+  const list = state.cards.filter(card =>
+    (!q || card.name.toLowerCase().includes(q))
+    && (state.type === "all" || card.kind === state.type)
+    && (state.set === "all" || card.set === state.set)
+    && (state.rarity === "all" || card.rarity === state.rarity)
+    && (!state.exOnly || isEx(card)));
+  list.sort(SORTERS[state.sort] || SORTERS.name);
+  state.filtered = list.slice(0, 240);
   renderResults();
 }
 
@@ -251,15 +320,8 @@ function renderResults() {
           <button class="btn btn-primary">Add${cardQuantity(card) ? ` (${cardQuantity(card)})` : ""}</button>
         </div>
       </div>`;
-    const img = tile.querySelector("img");
-    const sources = cardImageSources(card);
-    let attempt = 0;
-    img.onerror = () => {
-      attempt += 1;
-      if (attempt < sources.length) img.src = sources[attempt];
-      else img.remove(); // exhausted all sources -> show the initials placeholder
-    };
-    img.src = sources[0];
+    loadCardImage(tile.querySelector("img"), card);
+    tile.querySelector(".card-art").addEventListener("click", () => openLightbox(card));
     tile.querySelector("button").addEventListener("click", () => addCard(card));
     els.results.appendChild(tile);
   }
@@ -584,6 +646,46 @@ els.savedDecks.onchange = event => {
   if (name) loadSavedDeck(name);
 };
 
+// ---- Card detail lightbox ----
+
+function updateLightboxAdd(card) {
+  const q = cardQuantity(card);
+  els.lightboxAdd.textContent = q ? `Add to deck (${q}/2)` : "Add to deck";
+  els.lightboxAdd.disabled = q >= 2 || deckTotal() >= 20;
+}
+
+function openLightbox(card) {
+  els.lightboxName.textContent = card.name;
+  const rar = RARITY_LABELS[card.rarity] || card.rarity || "";
+  els.lightboxMeta.textContent =
+    `${card.set} #${card.number} · ID ${card.functionalId}${rar ? ` · ${rar}` : ""}`;
+  const badges = [`<span class="badge">${card.kind === "pokemon" ? "Pokémon" : "Trainer"}</span>`];
+  if (card.element) {
+    badges.push(`<span class="type-chip type-${card.element}"><i></i>${ENERGY_LABELS[card.element] || card.element}</span>`);
+  }
+  if (isEx(card)) badges.push(`<span class="badge badge-ex">ex</span>`);
+  els.lightboxBadges.innerHTML = badges.join("");
+  loadCardImage(els.lightboxImg, card);
+  els.lightboxAdd.onclick = () => { addCard(card); updateLightboxAdd(card); };
+  updateLightboxAdd(card);
+  els.lightbox.classList.add("visible");
+}
+function closeLightbox() { els.lightbox.classList.remove("visible"); }
+
+els.rarityFilter.onchange = event => { state.rarity = event.target.value; applyFilters(); };
+els.sortSelect.onchange = event => { state.sort = event.target.value; applyFilters(); };
+els.exToggle.onclick = () => {
+  state.exOnly = !state.exOnly;
+  els.exToggle.setAttribute("aria-pressed", String(state.exOnly));
+  els.exToggle.classList.toggle("active", state.exOnly);
+  applyFilters();
+};
+els.lightboxClose.onclick = closeLightbox;
+els.lightbox.onclick = event => { if (event.target === els.lightbox) closeLightbox(); };
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") { closeLightbox(); els.modalBackdrop.classList.remove("visible"); }
+});
+
 els.searchInput.oninput = event => { state.query = event.target.value; applyFilters(); };
 els.typeFilter.onchange = event => { state.type = event.target.value; applyFilters(); };
 els.setFilter.onchange = event => { state.set = event.target.value; applyFilters(); };
@@ -652,6 +754,8 @@ async function bootstrap() {
     }
     state.cards = uniqueFunctionalCards(raw);
     populateSetFilter();
+    populateRarityFilter();
+    els.sortSelect.value = state.sort;
     applyFilters();
     renderDeck();
     renderEnergies();
